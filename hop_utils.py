@@ -2,13 +2,13 @@ import os
 import torch
 import networkx as nx
 import numpy as np
-from itertools import combinations
-from typing import *
-from torch_geometric.typing import Adj
 import random
-from torch.nn.functional import softmax
+
+from typing import *
 from itertools import product
-from HiGCN.node_classify.utils.gen_HoHLaplacian import creat_L_SparseTensor
+from itertools import combinations
+from torch_geometric.typing import Adj
+from torch.nn.functional import softmax
 
 Tensor = torch.tensor
 Pair = Tuple[int, int]
@@ -47,6 +47,7 @@ def alter_paths(sp, cutoff, method, num_nodes):
         new_paths = {k+1: np.empty((0, k+1)) for k in range(2, cutoff+1)}  # for self loops
     elif method in ['sim_walk', 'greedy']:
         new_paths = torch.inf * torch.ones((num_nodes, num_nodes))
+        
     add_returns = {} 
     add_returns['k_hop_neighbours'] = {(k+1, node_i): [] for k, node_i in product(range(cutoff), range(num_nodes))}     # some nodes may not be connected
 
@@ -212,96 +213,6 @@ def sim_walk(
     return walk
 
 
-def _sim_walk(
-                adj, 
-                k_hop_neighbours, 
-                walk_config, 
-                shortest_path_lengths, 
-                feature_set, 
-                k, 
-                num_samples, 
-                device
-            ):
-    """
-        Populate the adjacency list from the shortest path by taking walks on the graph.
-    """
-    
-    gamma = walk_config.gamma 
-    jump_prob = walk_config.jump_prob
-    use_cosine = walk_config.use_cosine 
-    mving_avg = walk_config.mving_avg
-    num_nodes = feature_set.shape[0]
-
-    max_iters = 2 * num_samples
-    total_visited = 0 
-    last_visited = -1 
-
-    walk = torch.empty((2, num_samples+num_samples%2), device=device, dtype=torch.int64)        # possible break 
-    restart = True
-    for iter_idx in range(max_iters):
-        print(f'{iter_idx}/{max_iters}', walk.shape)
-        if restart:
-            i = torch.randint(0, num_nodes - 1, (1,), device=device).item()
-            neighbour_set = k_hop_neighbours[(k, i)]
-            weighted_sum = gamma * feature_set[i]
-            restart = False
-
-        # Restart condition
-        p = torch.rand(1, device=device).item()
-        if len(neighbour_set) == 0 or p <= jump_prob:
-            restart = True
-            continue
-        
-        # Select t; neighbours of j s.t. dist(i, t) in {k, k-1, k+1}
-        likelihoods = torch.empty(0, device=device, dtype=torch.float)
-        max_like, max_node = 0, -1
-        idx_to_node = [] 
-        for idx, t in enumerate(neighbour_set):
-            if shortest_path_lengths[t, i] not in [k] or t == last_visited:
-                continue
-            s = 1 - cosine_sim(feature_set[i], feature_set[t])
-            if use_cosine:
-                s = torch.arccos(s)
-            if mving_avg:
-                m = 1 - cosine_sim(weighted_sum, feature_set[t])
-                s = gamma * s + (1 - gamma) * m
-            likelihoods = torch.cat((likelihoods, s.unsqueeze(0)), dim=-1)
-            idx_to_node.append(t)
-
-            if s > max_like:
-                max_like = s 
-                max_node = t 
-
-        if likelihoods.shape[-1] == 0:
-            restart = True
-            continue 
-        
-        j = max_node 
-
-        probabilities = softmax(likelihoods, dim=-1)
-
-        # Choose an element j
-        cum_sum, j = 0, neighbour_set[-1]
-        threshold = torch.rand(1, device=device)
-        for idx, prob in enumerate(probabilities):
-            cum_sum += prob
-            if cum_sum >= threshold:
-                j = idx_to_node[idx]
-                break
-
-        # Add tensor into walk            
-        add_tensor(walk, i, j, total_visited, device)    
-        total_visited += 2
-        if total_visited >= num_samples:
-            break 
-        weighted_sum = gamma * (weighted_sum + feature_set[j])
-        last_visited = i
-        i = j  
-        neighbour_set = k_hop_neighbours[(k, i)]
-    
-    return walk
-
-
 def graph_search(
                     adj_list, 
                     k_hop_neighbours: Dict[int, List[int]], 
@@ -359,17 +270,18 @@ def get_shortest_paths(graph, K):
 import pickle 
 
 def get_K_adjs(adj_list, model_config, ds_config, feature_set=None, device=torch.device('cpu')) -> List[torch.tensor]:
-    sample_ratio = model_config.num_samples 
     K = model_config.K_hops 
     self_conn = model_config.loops
     method = model_config.select_method
 
     num_samples, num_nodes = adj_list.shape[-1], ds_config.num_nodes
-    #num_samples = min(num_samples, 90000)
+
+    print('createing networkx graph')
 
     graph = create_networkx_graph(adj_list)
-
     adj_lists = [adj_list.to(device) if k == 0 else torch.empty(size=(2, num_samples+num_samples%2), device=device, dtype=torch.int64) for k in range(K)] # could be made faster 
+
+    print('finding shortest paths')
 
     shortest_paths = get_shortest_paths(graph, K)
     shortest_paths, add_returns = alter_paths(shortest_paths, K, method, num_nodes)
@@ -397,14 +309,5 @@ def get_K_adjs(adj_list, model_config, ds_config, feature_set=None, device=torch
         adj_lists[k] = adj_k
 
     return adj_lists
-
-
-def get_HO_laplacian(adj_list, num_nodes: int, max_clique: int = 2):
-    graph = nx.Graph()
-    graph.add_nodes_from(range(num_nodes))
-    graph.add_edges_from(adj_list.cpu().numpy().transpose())
-
-
-    return creat_L_SparseTensor(graph, max_clique)
 
 

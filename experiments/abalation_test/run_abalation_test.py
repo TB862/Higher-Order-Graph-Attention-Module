@@ -1,3 +1,4 @@
+# third party 
 import os 
 import sys 
 
@@ -6,26 +7,21 @@ directory_path = os.path.abspath(os.getcwd())
 if directory_path not in sys.path:
     sys.path.append(directory_path)
 
-sys.path.append('/home/tbai869/GRAND_project/grand_src')
-
-from utils import fetch_dataset, create_models, collect_metrics
-from train import train_model
 from itertools import product 
-from config.all_config import graph_config 
-import os 
+from ml_collections import ConfigDict
 import copy 
 import argparse
-from ml_collections import ConfigDict
-from utils import get_metric_functions
 import numpy as np
-import torch.nn as nn 
-from typing import * 
-import wandb 
 import json 
-from itertools import product 
 import torch
+import torch.nn as nn 
 
-from utils import best_params_dict, assign_to_config
+
+
+# first party 
+from config.all_config import graph_config 
+from utils import *
+from train import train_model
 
 
 def minor_parameters(method: str):
@@ -70,7 +66,7 @@ def tune_hp(config, model_config, ds_config, method, project, num_repeats, model
         device = config.device 
         metric_callables = get_metric_functions(ds_config, device)
 
-        if 'MultiHop' in model_nm:
+        if 'HoGA' in model_nm:
             dataset = data_dict['multihop_dataset']  
         else:
             dataset = data_dict['dataset']
@@ -101,8 +97,8 @@ def tune_hp(config, model_config, ds_config, method, project, num_repeats, model
     config.baselines[model_nm] = model_config 
 
     # hard code 
-    if model_nm == 'MultiHop_GRAND':
-        config.baselines.MultiHop_GAT.K_hops = model_config.K_hops 
+    if model_nm == 'HoGA_GRAND':
+        config.baselines.HoGA_GAT.K_hops = model_config.K_hops 
 
     data_dict = fetch_dataset(config, ds_config.name)
 
@@ -157,18 +153,18 @@ def run(pargs):
         model_nm = 'GAT'
         config.baselines.names = ['GAT']
     elif pargs.ho_GAT:
-        model_nm = 'MultiHop_GAT'
-        config.baselines.names = ['MultiHop_GAT']
+        model_nm = 'HOGA_GAT'
+        config.baselines.names = ['HOGA_GAT']
     elif pargs.ho_GRAND:
-        model_nm = 'MultiHop_GRAND'
-        config.baselines.names = ['MultiHop_GRAND']
+        model_nm = 'HOGA_GRAND'
+        config.baselines.names = ['HOGA_GRAND']
     elif pargs.norm_GRAND:
         model_nm = 'GRAND'
         config.baselines.names = ['GRAND']
 
 
     model_config = config.baselines[model_nm]
-    if model_nm in ['GRAND', 'MultiHop_GRAND']:
+    if model_nm in ['GRAND', 'HOGA_GRAND']:
         best_opt = best_params_dict[ds_config.name]
         assign_to_config(model_config, config.baselines.GRAND, training=False)
         assign_to_config(model_config, best_opt)

@@ -1,3 +1,4 @@
+# third party 
 import os
 import sys
 import argparse
@@ -5,16 +6,12 @@ import json
 import torch
 import numpy as np
 import scipy.sparse as sp
+
+# first party 
 from config.all_config import *
 from utils import *
 from train import *
 
-# Add paths to the system
-sys.path.append(os.path.abspath(os.path.join('spmpnn', 'src', 'utils')))
-sys.path.append(os.path.abspath(os.path.join('spmpnn', 'src', 'models')))
-sys.path.append(os.path.abspath(os.path.join('spmpnn', 'src', 'models', 'layers')))
-sys.path.append(os.path.abspath(os.path.join('PathNNs_expressive', 'benchmarks')))
-sys.path.append(os.path.abspath(os.path.join('grand_src')))
 
 def list_format(string):
     try:
@@ -22,9 +19,9 @@ def list_format(string):
     except json.JSONDecodeError:
         raise argparse.ArgumentTypeError('Input must be a JSON list')  # Raise error if input is not valid JSON
 
+
 def run_experiment(pargs):
     # Unpack arguments
-    config_name = pargs.config
     ds_name = pargs.dataset
     do_train = pargs.train
     do_test = pargs.test
@@ -38,20 +35,14 @@ def run_experiment(pargs):
     # For sampling method ablation
     method = pargs.method
 
-    # Collect configs, dataset
-    if config_name == 'graph':  # For now, just keep it simple
-        config = graph_config()
-    elif isinstance(config_name, ConfigDict):
-        config = config_name
-    else:
-        raise ValueError('Invalid configuration name')
+    config = all_config()
     
     if nrepeat is not None:
         config.experiments.num_repeats = nrepeat 
 
     model_names = config.baselines.names
 
-    config.baselines.MultiHop_GAT.beta_mul = beta_mul 
+    config.baselines.HoGA_GAT.beta_mul = beta_mul 
 
     ds_config = get_ds_config(config, ds_name)
     add_args = {}
@@ -62,14 +53,14 @@ def run_experiment(pargs):
     # Override config file
     if method is not None:
         print('Starting run with sampling method')
-        config.baselines.names = ['MultiHop_GAT']
-        config.baselines.MultiHop_GAT.load_samples = True
-        config.baselines.MultiHop_GAT.select_method = method
-        config.baselines.MultiHop_GAT.K_hops = 3
-        config.baselines.MultiHop_GAT.num_heads = [8, 1]
+        config.baselines.names = ['HoGA_GAT']
+        config.baselines.HoGA_GAT.load_samples = True
+        config.baselines.HoGA_GAT.select_method = method
+        config.baselines.HoGA_GAT.K_hops = 3
+        config.baselines.HoGA_GAT.num_heads = [8, 1]
     if khop is not None:
-        config.baselines.MultiHop_GAT.K_hops = khop 
-        config.baselines.MultiHop_GAT.load_samples = True
+        config.baselines.HoGA_GAT.K_hops = khop 
+        config.baselines.HoGA_GAT.load_samples = True
     
     if model is not None:
         config.baselines.names = [model]
@@ -83,7 +74,7 @@ def run_experiment(pargs):
     data_dict = fetch_dataset(config, ds_name, False, add_args)
 
     # Training
-    if ds_config.training.loss == 'cross entropy':
+    if ds_config.loss == 'cross_entropy':
         loss = nn.CrossEntropyLoss()  # Default loss function
     else:
         raise ValueError(f'Invalid loss type {ds_config.loss} in configuration file')
@@ -96,40 +87,18 @@ def run_experiment(pargs):
         nrepeats = config.experiments.num_repeats
         all_metrics = load_from_checkpoint(config, ds_name, nrepeats)
 
-    # get edge weights of GAT 
-    data = data_dict['dataset']
-    x = data.x
-    edge_index = data.edge_index 
-
-    # convert to coo matrix 
-    """out, (edge_index, alpha) = models['GAT'](x, edge_index, return_attention_weights=True)
-    print(alpha.shape)
-    num_nodes = torch.max(edge_index) + 1 
-    alpha = to_numpy(alpha).squeeze()
-    edge_index = to_numpy(edge_index) 
-    row, col = edge_index[0], edge_index[1]
-
-    coo_adj_matrix = sp.coo_matrix((alpha, (row, col)), shape=(num_nodes, num_nodes))
-    sp.save_npz(f'{ds_name}_adj.npz', coo_adj_matrix)
-    
-    exit()"""
-
     print(all_metrics)
     for model, metric_dict in all_metrics.items():
         acc = metric_dict['Accuracy']
         print(f'{ds_name} result with method {method}')
         print(model, np.mean(acc), np.std(acc))
 
-    # Optional significance testing
-    if do_train and do_test:
-        pass
-
     return all_metrics
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset', type=str, help='The name of the dataset to run')
-    parser.add_argument('--config', type=str, help='The type of configuration file', default='graph')
     parser.add_argument('--gpu', type=int, default=None, help='Override model GPU in config file')
     parser.add_argument('--khop', type=int, default=None, help='Override model GPU in config file')
     parser.add_argument('--beta_mul', type=float, default=1.0, help='Override model GPU in config file')

@@ -1,19 +1,14 @@
+# third party 
 import torch.nn as nn
-from torch_geometric.nn import GATConv
-from torch_geometric.nn.aggr import SumAggregation, MaxAggregation, MeanAggregation
-from torch_geometric.nn.pool import SAGPooling, EdgePooling
-from torch_geometric.utils import dropout_adj 
-from functools import partial 
-from torch_geometric.nn import Sequential
-from hop_utils import *
 import torch
-from torch_geometric.nn.inits import glorot
-from torch_geometric.nn import MessagePassing
-import torch.nn.functional as F
-from torch_geometric.nn import GATConv
-from grand_src.function_transformer_attention import SpGraphTransAttentionLayer
-from torch_geometric.utils import softmax 
 import torch_sparse 
+
+import torch_geometric.nn as tgnn 
+from torch_geometric.utils import dropout_adj, softmax 
+
+# first party 
+from hop_utils import *
+#from grand_src.function_transformer_attention import SpGraphTransAttentionLayer
 
 
 class GenericGAT(nn.Module):
@@ -55,7 +50,7 @@ class GenericGAT(nn.Module):
 
             do_concat = (l != self.num_layers - 1)  
             if layer_type == 'normal':
-                layer = GATConv(in_f, out_f, heads=num_heads[l], dropout=dropout, concat=do_concat, add_self_loops=True)
+                layer = tgnn.GATConv(in_f, out_f, heads=num_heads[l], dropout=dropout, concat=do_concat, add_self_loops=True)
             elif layer_type == 'multi_hop':
                 layer = HigherOrderGATHead(in_f, out_f, num_heads[l], do_concat, model_config)
             else:
@@ -63,27 +58,30 @@ class GenericGAT(nn.Module):
             self.heads.append(layer)
 
         self.heads = nn.ModuleList(self.heads)
-
         self.act_prelim = nn.ELU()
         self.act_final = nn.LogSoftmax(dim=-1)
 
         self.reset_parameters() 
 
+
     def forward(self, x, edge_index):
         if self.layer_type == 'normal':
             edge_index = len(self.heads) * [edge_index]
-
+        
         for n, (head, ei) in enumerate(zip(self.heads, edge_index)):
             x = head(x, ei)
             if n != len(self.heads) - 1:
                 x = self.act_prelim(x)
         
         x = self.act_final(x)
+
         return x
+
 
     def reset_parameters(self):
         for head in self.heads:
             head.reset_parameters()
+
 
 class HigherOrderGATHead(nn.Module):
     def __init__(self, in_features, out_features, num_heads, do_concat, model_config, agg_type='sum'):
@@ -108,6 +106,7 @@ class HigherOrderGATHead(nn.Module):
 
         self.agg_type = model_config.agg_func  
 
+
     def forward(self, x, edge_index_list):
         pred_head = None
  
@@ -128,6 +127,7 @@ class HigherOrderGATHead(nn.Module):
             raise ValueError() 
 
         return pred_head
+
 
     def reset_parameters(self):
         for head in self.heads:
@@ -245,15 +245,14 @@ class HigherOrderGATLayer(nn.Module):
         dropout =  model_config.drop_out  
 
         self.beta_mul = model_config.beta_mul 
-
-        self.ret_attention = model_config.ret_attention 
         self.agg_type = agg_type 
 
         self.head_type = model_config.head_type 
         self.attn_heads = [] 
+
         for k in range(num_hops):
             if self.head_type == 'gat':
-                self.attn_heads.append(GATConv( 
+                self.attn_heads.append(tgnn.GATConv( 
                                                 in_features, 
                                                 out_features, 
                                                 dropout=dropout, 
@@ -269,24 +268,17 @@ class HigherOrderGATLayer(nn.Module):
                                                                     model_config                      
                 ))
             else:
-                raise ValueError()
+                raise ValueError('Invalid Head Type')
 
         self.attn_heads = nn.ModuleList(self.attn_heads)
-        self.ret_attention = False 
 
-    def switch_attn(self):
-        self.ret_attention = True
 
     def forward(self, features, edge_index_list): 
         dist_features = None 
         for k, (headk, edge_indexk) in enumerate(zip(self.attn_heads, edge_index_list)):  
             betak = 1 if k == 0 else self.beta_mul * 1/(k+1)
-            if self.ret_attention:
-                coll = headk(features, edge_indexk, return_attention_weights=True)
-                pred = betak * coll[-1][-1]
-            else:
-                pred = betak * headk(features, edge_indexk)
-            
+
+            pred = betak * headk(features, edge_indexk)
             pred = pred.unsqueeze(dim=-1)
             if dist_features is None:
                 dist_features = pred
@@ -295,16 +287,17 @@ class HigherOrderGATLayer(nn.Module):
 
         # potential problem area 
         if self.agg_type == 'sum':
-            agg = SumAggregation() 
+            agg = tgnn.aggr.SumAggregation() 
             dist_features = agg(dist_features, dim=-1).squeeze(-1)
         elif self.agg_type == 'identity':
             dist_features = dist_features
         elif self.ret_alpha:
             dist_features = combine_tensor_list(dist_features)
         else:
-            raise ValueError() 
+            raise ValueError('Invalid Aggregation Argument') 
 
         return dist_features
+
 
     def reset_parameters(self):
         for head in self.attn_heads:

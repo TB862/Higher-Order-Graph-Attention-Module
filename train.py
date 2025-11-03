@@ -1,16 +1,12 @@
-from utils import *
+# third party 
 from itertools import product
 import matplotlib.pyplot as plt
 import yaml
-from grand_src.run_GNN import train 
 from torch.optim.lr_scheduler import ExponentialLR
-from torch_geometric.logging import log
 
-from torch_geometric.data import InMemoryDataset
-from HiGCN.node_classify.src.run_node_exp import RunExp
-from time import time 
-
-import torch.nn.functional as F
+# first party 
+#from grand_src.run_GNN import train 
+from utils import *
 
 
 def get_val_loss(model, data, loss, device) -> float:  
@@ -80,9 +76,9 @@ def train_model(
     save_freq = model_config.training.save_freq
     weight_decay = model_config.training.weight_decay           
     lr = model_config.training.lr 
-    gamma = model_config.training.gamma 
+    gamma = model_config.training.decay 
 
-    if model_config.training.optimiser == 'adam':
+    if model_config.training.optimizer == 'adam':
         optimiser = torch.optim.Adam(model.parameters(), weight_decay=weight_decay, lr=lr)
     else:
         raise ValueError(f"Invalid optimiser name {model_config.training.optimiser} in configuration file")
@@ -131,10 +127,7 @@ def meta_train(
     device = config.device
 
     metric_callables = get_metric_functions(ds_config, device)
-
     meta_metrics = {mn: {} for mn in models}
-    run_times = {mn: [] for mn in models}
-    memory_usage = {mn: [] for mn in models}
 
     for n, (mn, model) in product(range(num_repeats), models.items()):  
         if mn in ['GRAND', 'MultiHop_GRAND', 'HiGCN', 'GraphTransformer', 'SPAGAN', 'MixHop']:               # reset parameters not well supported in GRAND source 
@@ -158,19 +151,7 @@ def meta_train(
             step_method = 'normal'
 
         model_config = config.baselines[mn] 
-
-        if mn != 'HiGCN':
-            torch.cuda.reset_peak_memory_stats(device)
-            inital_memory = torch.cuda.max_memory_allocated(device=device)
-
-        start = time()
         train_loss, val_loss = train_model(model_config, model, data, loss, full_path, device, step_method)
-        end = time() 
-
-        if mn != 'HiGCN':
-            final_memory = torch.cuda.max_memory_allocated(device=device)
-            memory_usage[mn].append(final_memory - inital_memory/(1024 * 1024))
-        run_times[mn].append(end - start)
 
         model = torch.load(os.path.join(full_path, 'model.pt'))
         metrics = collect_metrics(model, data, metric_callables, device)
@@ -197,11 +178,5 @@ def meta_train(
         del config_dict['device']   # not serializable
         with open(os.path.join(full_path, 'config.yml'), 'w') as writer:
             yaml.dump(config_dict, writer)
-
-    print()
-    for (mn, run), mem in zip(run_times.items(), memory_usage.values()):
-        print(f'{mn} RUN TIMES {run}, MEAN: {np.mean(run)}, STD: {np.std(run)}')
-        print(f'{mn} MEMORY USAGE {mem}, MEAN: {np.mean(mem)}, STD: {np.std(mem)}')
-    print()
 
     return meta_metrics
