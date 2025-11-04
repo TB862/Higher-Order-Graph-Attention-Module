@@ -17,8 +17,8 @@ HoGA extends existing single-hop GNN models to a k-hop setting by sampling the k
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/TB862/Higher_Order.git
-   cd Higher_Order
+   git clone https://github.com/TB862/Higher-Order-Graph-Attention-Module.git
+   cd Higher-Order-Graph-Attention-Module
 
 2. **Run an experiment on the Cora dataset:**
    ```bash
